@@ -11,7 +11,6 @@ import Review from './Review';
 const CRON_TIME = config.cron.time;
 const TIME_ZONE = config.cron.timeZone;
 const DB_PATH = process.cwd() + "/reviewet.sqlite";
-const REFRESH_TOKEN = config.google_api_refresh_token;
 
 // 通知しない設定
 let ignoreNotification = config.firstTimeIgnore;
@@ -32,7 +31,7 @@ try {
     const exec = require('child_process').exec;
     exec(process.cwd() + "/shell/refresh_token.sh", (e, stdout, stderr) => {
         if (e) {
-          console.log(err);
+          console.log(e);
         }
         console.log(stdout);
     });
