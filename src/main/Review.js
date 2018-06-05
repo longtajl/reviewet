@@ -34,12 +34,16 @@ export default class Review {
     // 初回通知しないオプション（起動後に設定されたレビュー結果を通知しないためのオプション）
     this.ignoreNotification = ignoreNotification;
 
+    // Google Play Developer API Token
+    this.getGoogleAPIToken = this.getGoogleAPIToken.bind(this);
+
     this.main = this.main.bind(this);
     this.ios = this.ios.bind(this);
     this.android = this.android.bind(this);
     this.noticeAppReview = this.noticeAppReview.bind(this);
     this.createIosUrl = this.createIosUrl.bind(this);
     this.createAndroidUrl = this.createAndroidUrl.bind(this);
+    this.createAndroidReviewUrl = this.createAndroidReviewUrl.bind(this);
     this.analyzeIosData = this.analyzeIosData.bind(this);
     this.getIosReview = this.getIosReview.bind(this);
     this.analyzeAndroidData = this.analyzeAndroidData.bind(this);
@@ -99,11 +103,15 @@ export default class Review {
         let android_url = this.createAndroidUrl(androidId);
         let androidApp = new AppData("Android", androidId);
 
+        // APIのレスポンスから名称が取れないのでIDを追加しておく
+        androidApp.name = "Android " + androidId;
+
         // Androidはストアサイトから直接データを取得するので、遷移先のURLにそのまま使う
         androidApp.url = android_url;
 
         // Androidアプリのレビューを通知
-        this.noticeAppReview(androidApp, android_url, this.analyzeAndroidData);
+        let android_review_url = this.createAndroidReviewUrl(androidId);
+        this.noticeAppReview(androidApp, android_review_url, this.analyzeAndroidData);
       }
     }
   }
@@ -132,6 +140,7 @@ export default class Review {
       appfunc($, appData).then((reviewData) => {
 
         const notification = new Notification(appData, reviewData, config);
+
         // 表示件数制御
         if (outputs >= 0 && reviewData !== null && reviewData.length > outputs) {
           reviewData.length = outputs;
@@ -164,11 +173,29 @@ export default class Review {
   }
 
   /**
-   * Androidアプリのレビューデータ取得元のURLを生成する。
+   * AndroidアプリのGooglePlayリンク
    * @param appId 取得対象アプリのGooglePlay ID
    */
   createAndroidUrl(appId) {
     return "https://play.google.com/store/apps/details?id=" + appId + "&hl=" + this.lang;
+  }
+
+  /**
+   * AndroidアプリのレビューLIST取得API
+   * @param appId 取得対象アプリのGooglePlay ID
+   */
+  createAndroidReviewUrl(appId) {
+    return "https://www.googleapis.com/androidpublisher/v3/applications/" + appId
+      + "/reviews?access_token=" + this.getGoogleAPIToken() + "&maxResults=1000";
+  }
+
+  /**
+   * Google API用のトークンをファイルから読み込み
+   */
+  getGoogleAPIToken() {
+    const fs = require('fs');
+    const token = process.cwd() + "/api.token";
+    return fs.readFileSync(token, 'utf-8').trim();
   }
 
   /**
@@ -252,16 +279,14 @@ export default class Review {
     return new Promise((resolve, reject) => {
 
       // レビュー本文の後ろにくる「全文を表示」を削除
-      $('div.review-link').remove();
-
-      // アプリ情報を設定
-      appData.name = $('.id-app-title').text();
+      //$('div.review-link').remove();
+      const json = JSON.parse($.text());
 
       // レビュー情報を設定
       let reviewProcess = [];
-      $('.single-review').each((i, element) => {
-        reviewProcess.push(this.getAndroidReview($, appData, element));
-      });
+      json.reviews.forEach(review => {
+        reviewProcess.push(this.getAndroidReview($, appData, review));
+      })
       Promise.all(reviewProcess).then((data) => {
         let returnData = [];
         for (let i=0; i < data.length; i++) {
@@ -271,6 +296,7 @@ export default class Review {
         }
         resolve(returnData);
       });
+
     });
   }
 
@@ -284,29 +310,17 @@ export default class Review {
    * @param element
    * @returns {Promise}
    */
-  getAndroidReview($, appData, element) {
-
+  getAndroidReview($, appData, review) {
     return new Promise((resolve, reject) => {
       let param = [];
+      const userComment = review.comments[0].userComment;
 
-      const reviewInfo = $(element).find('.review-info');
-      param.reviewId = $(element).find('.review-header').attr('data-reviewid');
-      param.updated = $(reviewInfo).find('.review-date').text();
-
-      // TODO:日本語以外にも対応する
-      const tempRating = $(reviewInfo).find('.review-info-star-rating .tiny-star').attr('aria-label');
-      const trimRatingLength = '5つ星のうち'.length;
-      param.rating = tempRating.substring(trimRatingLength, trimRatingLength + 1);
-
-      // アプリバージョンは取れないのでハイフンにする
-      param.version = "-";
-
-      const reviewBody = $(element).find('.review-body.with-review-wrapper');
-      param.title = $(reviewBody).find('.review-title').text();
-
-      // レビュー本文の前からタイトルを削除し、前後の空白を削除
-      const tempMessage = $(reviewBody).text().replace(param.title, "");
-      param.message = tempMessage.trim();
+      param.reviewId = review.reviewId;
+      param.updated = userComment.lastModified.seconds;
+      param.rating = userComment.starRating;
+      param.version = userComment.appVersionName;
+      param.title = appData.appId
+      param.message = userComment.text;
 
       const reviewData = new ReviewData(param);
 
@@ -334,18 +348,22 @@ export default class Review {
       this.selectRecord(reviewData, appData.kind).then((result) => {
 
         // レコードの有無をチェックする
-        if (result.cnt === 0) {
-          this.db.serialize(() => {
-            // 挿入用プリペアドステートメントを準備
-            const ins_androidReview = this.db.prepare(
-              "INSERT INTO review(id, kind, app_name, title, message, rating, updated, version, create_date) " +
-              "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        if (result[0].cnt === 0) {
 
-            ins_androidReview.run(
-              reviewData.reviewId, appData.kind, appData.name, reviewData.title, reviewData.message,
-              reviewData.rating, reviewData.updated, reviewData.version, new Date());
-            ins_androidReview.finalize();
+          // 挿入用プリペアドステートメントを準備
+          const ins_androidReview =
+            "INSERT INTO review(id, kind, app_name, title, message, rating, updated, version, create_date) " +
+            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
+          const values = [reviewData.reviewId, appData.kind, appData.name, reviewData.title, reviewData.message,
+              reviewData.rating, reviewData.updated, reviewData.version, new Date()];
+
+          this.db.query(ins_androidReview, values, (e, res, fields) => {
+            if (e) {
+              console.log(e);
+            }
           });
+
           resolve(true);
         } else {
           resolve(false);
@@ -385,15 +403,11 @@ export default class Review {
    */
   selectRecord(condition, kind) {
     return new Promise((resolve, reject) => {
-      this.db.serialize(() => {
-        this.db.get('SELECT count(*) as cnt FROM review WHERE id = $id AND kind = $kind',
-          { $id: condition.reviewId, $kind: kind },
-          (err, res) => {
-            if (err) {
-              return reject(err);
-            }
-            resolve(res);
-          });
+      this.db.query('SELECT count(*) as cnt FROM review WHERE id = ? AND kind = ?', [condition.reviewId, kind], (err, res, fields) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve(res);
       });
     });
   }
