@@ -9,9 +9,9 @@
     "forever": "^0.15.3",
     "fs": "0.0.2",
     "js-yaml": "^3.11.0",
+    "mysql": "^2.15.0",
     "nodemailer": "^4.6.4",
     "slack-node": "^0.2.0",
-    "sqlite3": "^4.0.0",
     "xml2js": "^0.4.19"
   },
   "main": "dist/main/app.js",

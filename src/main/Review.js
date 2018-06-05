@@ -348,18 +348,22 @@ export default class Review {
       this.selectRecord(reviewData, appData.kind).then((result) => {
 
         // レコードの有無をチェックする
-        if (result.cnt === 0) {
-          this.db.serialize(() => {
-            // 挿入用プリペアドステートメントを準備
-            const ins_androidReview = this.db.prepare(
-              "INSERT INTO review(id, kind, app_name, title, message, rating, updated, version, create_date) " +
-              "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        if (result[0].cnt === 0) {
 
-            ins_androidReview.run(
-              reviewData.reviewId, appData.kind, appData.name, reviewData.title, reviewData.message,
-              reviewData.rating, reviewData.updated, reviewData.version, new Date());
-            ins_androidReview.finalize();
+          // 挿入用プリペアドステートメントを準備
+          const ins_androidReview =
+            "INSERT INTO review(id, kind, app_name, title, message, rating, updated, version, create_date) " +
+            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
+          const values = [reviewData.reviewId, appData.kind, appData.name, reviewData.title, reviewData.message,
+              reviewData.rating, reviewData.updated, reviewData.version, new Date()];
+
+          this.db.query(ins_androidReview, values, (e, res, fields) => {
+            if (e) {
+              console.log(e);
+            }
           });
+
           resolve(true);
         } else {
           resolve(false);
@@ -399,15 +403,11 @@ export default class Review {
    */
   selectRecord(condition, kind) {
     return new Promise((resolve, reject) => {
-      this.db.serialize(() => {
-        this.db.get('SELECT count(*) as cnt FROM review WHERE id = $id AND kind = $kind',
-          { $id: condition.reviewId, $kind: kind },
-          (err, res) => {
-            if (err) {
-              return reject(err);
-            }
-            resolve(res);
-          });
+      this.db.query('SELECT count(*) as cnt FROM review WHERE id = ? AND kind = ?', [condition.reviewId, kind], (err, res, fields) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve(res);
       });
     });
   }
